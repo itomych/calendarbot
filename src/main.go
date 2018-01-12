@@ -26,7 +26,8 @@ import (
 
 //AppConfig is a struct for storing application config
 type AppConfig struct {
-	Email string
+	Email         string
+	CheckInterval time.Duration
 }
 
 // getClient uses a Context and Config to retrieve a Token
@@ -265,7 +266,7 @@ func main() {
 		return
 	}
 
-	log.Printf("Calendar Checker. Using email %s", appConfig.Email)
+	log.Printf("Calendar Checker. Using email %s. Check interval %d seconds", appConfig.Email, appConfig.CheckInterval)
 
 	ctx := context.Background()
 
@@ -287,5 +288,5 @@ func main() {
 		log.Fatalf("Unable to retrieve calendar Client %v", err)
 	}
 
-	doEvery(60*time.Second, calendarChecker)
+	doEvery(appConfig.CheckInterval*time.Second, calendarChecker)
 }
