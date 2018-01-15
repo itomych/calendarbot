@@ -159,14 +159,6 @@ func calendarChecker() {
 		counter := 0
 		for _, i := range events.Items {
 
-			var when string
-			// If the DateTime is an empty string the Event is an all-day Event.
-			// So only Date is available.
-			if i.Start.DateTime != "" {
-				when = i.Start.DateTime
-			} else {
-				when = i.Start.Date
-			}
 			eventTimeBegin, err := time.Parse(time.RFC3339, i.Start.DateTime)
 			if err != nil {
 				fmt.Println(err)
