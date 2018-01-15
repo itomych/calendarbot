@@ -230,10 +230,10 @@ func calendarChecker() {
 				}
 
 				if isIntersectionFound {
-					log.Printf("\tdeclining event %s (%s)\n", i.Summary, when)
+					log.Printf("\tdeclining event %s (%s)\n", i.Summary, eventRange)
 					attendance.ResponseStatus = "declined"
 				} else {
-					log.Printf("\taccepting event %s (%s)\n", i.Summary, when)
+					log.Printf("\taccepting event %s (%s)\n", i.Summary, eventRange)
 					attendance.ResponseStatus = "accepted"
 				}
 

@@ -1,0 +1,10 @@
+version: '2'
+
+services:
+  calendarbot:
+    image: itomychstudio/calendarbot
+    container_name: "calendarbot"
+    restart: always
+
+    environment:
+      - TIME_ZONE=Europe/Kiev
