@@ -149,7 +149,7 @@ func calendarChecker() {
 	fmt.Printf("Checking calendar %s\n", t)
 
 	events, err := calendarService.Events.List("primary").ShowDeleted(false).
-		SingleEvents(true).TimeMin(t).MaxResults(50).OrderBy("startTime").Do()
+		SingleEvents(true).TimeMin(t).MaxResults(100).OrderBy("startTime").Do()
 	if err != nil {
 		log.Fatalf("Unable to retrieve next ten of the user's events. %v", err)
 	}
@@ -180,12 +180,12 @@ func calendarChecker() {
 			}
 			eventDateStart := getDayBeginning(eventTimeBegin)
 			eventDateEnd := getDayEnd(eventTimeEnd)
-			eventRange := timespan.NewTimeSpan(eventDateStart, eventDateEnd)
+			eventRange := timespan.NewTimeSpan(eventTimeBegin, eventTimeEnd)
 
 			var attendance = findAttendee(appConfig.Email, i.Attendees)
-			if attendance.ResponseStatus == "needsAction" {
+			if attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "tentative" {
 				counter++
-				fmt.Printf("%s (%s) %s\n", i.Summary, when, attendance.ResponseStatus)
+				fmt.Printf("%s (%s) %s\n", i.Summary, eventRange, attendance.ResponseStatus)
 				//get the list of all events for the same day
 				log.Printf("day: %s %s\n", eventDateStart.Format(time.RFC3339), eventDateEnd.Format(time.RFC3339))
 				possibleEvents, err := calendarService.Events.List("primary").ShowDeleted(false).SingleEvents(true).TimeMin(eventDateStart.Format(time.RFC3339)).TimeMax(eventDateEnd.Format(time.RFC3339)).Do()
@@ -236,6 +236,7 @@ func calendarChecker() {
 					log.Printf("\taccepting event %s (%s)\n", i.Summary, when)
 					attendance.ResponseStatus = "accepted"
 				}
+
 				_, err = calendarService.Events.Update("primary", i.Id, i).SendNotifications(true).Do()
 
 				if err != nil {
