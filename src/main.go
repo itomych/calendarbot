@@ -126,7 +126,7 @@ func getDayEnd(t time.Time) time.Time {
 }
 
 func areTimespansIntersected(t1, t2 timespan.TimeSpan) bool {
-	return t1.Contains(t2.Start()) || t1.Contains(t2.End())
+	return t1.Contains(t2.Start().Add(1*time.Minute)) || t1.Contains(t2.End().Add(-1*time.Minute))
 }
 
 func init() {
