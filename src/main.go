@@ -53,7 +53,7 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 		log.Fatalf("Unable to read authorization code %v", err)
 	}
 
-	tok, err := config.Exchange(oauth2.NoContext, code)
+	tok, err := config.Exchange(context.Background(), code)
 	if err != nil {
 		log.Fatalf("Unable to retrieve token from web %v", err)
 	}
@@ -64,7 +64,11 @@ func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 // It returns the generated credential path/filename.
 func tokenCacheFile() string {
 	tokenCacheDir := filepath.Join(os.Getenv("HOME"), ".credentials")
-	os.MkdirAll(tokenCacheDir, 0700)
+	err := os.MkdirAll(tokenCacheDir, 0700)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	return filepath.Join(tokenCacheDir,
 		url.QueryEscape("itomych-calendar-bot.json"))
 }
@@ -78,7 +82,12 @@ func tokenFromFile(file string) (*oauth2.Token, error) {
 	}
 	t := &oauth2.Token{}
 	err = json.NewDecoder(f).Decode(t)
-	defer f.Close()
+	defer func(f *os.File) {
+		err = f.Close()
+		if err != nil {
+			log.Fatal(err)
+		}
+	}(f)
 	return t, err
 }
 
@@ -90,8 +99,18 @@ func saveToken(file string, token *oauth2.Token) {
 	if err != nil {
 		log.Fatalf("Unable to cache oauth token: %v", err)
 	}
-	defer f.Close()
-	json.NewEncoder(f).Encode(token)
+
+	defer func(f *os.File) {
+		err = f.Close()
+		if err != nil {
+			log.Fatalf("Unable to cache oauth token: %v", err)
+		}
+	}(f)
+
+	err = json.NewEncoder(f).Encode(token)
+	if err != nil {
+		log.Fatalf("Unable to cache oauth token: %v", err)
+	}
 }
 
 func findAttendee(email string, attendees []*calendar.EventAttendee) *calendar.EventAttendee {
@@ -136,6 +155,98 @@ func doEvery(d time.Duration, f func()) {
 var appConfig AppConfig
 var calendarService *calendar.Service
 
+func analyzeIntersections(eventRange timespan.TimeSpan, possibleEvents *calendar.Events) bool {
+	for _, possEvent := range possibleEvents.Items {
+
+		var possEventAttendance = findAttendee(appConfig.Email, possEvent.Attendees)
+		//find only accepted events
+		if possEventAttendance.ResponseStatus != "accepted" {
+			continue
+		}
+
+		possEventTimeBegin, beginParseError := time.Parse(time.RFC3339, possEvent.Start.DateTime)
+		if beginParseError != nil {
+			fmt.Println(beginParseError)
+			continue
+		}
+
+		possEventTimeEnd, endParseError := time.Parse(time.RFC3339, possEvent.End.DateTime)
+		if endParseError != nil {
+			fmt.Println(endParseError)
+			continue
+		}
+
+		possEventRange := timespan.NewTimeSpan(possEventTimeBegin, possEventTimeEnd)
+
+		//fmt.Printf("\tpossible event: %s (%s) %s\n", i.Summary, eventRange, attendance.ResponseStatus)
+
+		if areTimespansIntersected(eventRange, possEventRange) {
+			log.Printf("\tfound intersection with %s (%s)\n", possEvent.Summary, possEventRange)
+			return true
+		}
+	}
+
+	return false
+}
+
+func findPossibleEvents(start time.Time, end time.Time) (*calendar.Events, error) {
+	possibleEvents, err := calendarService.Events.List("primary").ShowDeleted(false).SingleEvents(true).TimeMin(start.Format(time.RFC3339)).TimeMax(end.Format(time.RFC3339)).Do()
+	return possibleEvents, err
+}
+
+func checkEvent(event *calendar.Event) bool {
+	eventTimeBegin, err := time.Parse(time.RFC3339, event.Start.DateTime)
+	if err != nil {
+		fmt.Println(err)
+		return true
+	}
+
+	eventTimeEnd, err := time.Parse(time.RFC3339, event.End.DateTime)
+	if err != nil {
+		fmt.Println(err)
+		return true
+	}
+	eventDateStart := getDayBeginning(eventTimeBegin)
+	eventDateEnd := getDayEnd(eventTimeEnd)
+	eventRange := timespan.NewTimeSpan(eventTimeBegin, eventTimeEnd)
+
+	var attendance = findAttendee(appConfig.Email, event.Attendees)
+	if attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "tentative" {
+
+		fmt.Printf("%s (%s) %s\n", event.Summary, eventRange, attendance.ResponseStatus)
+		//get the list of all events for the same day
+		log.Printf("day: %s %s\n", eventDateStart.Format(time.RFC3339), eventDateEnd.Format(time.RFC3339))
+		possibleEvents, err := findPossibleEvents(eventDateStart, eventDateEnd)
+
+		if err != nil {
+			fmt.Println(err)
+			return false
+		}
+
+		log.Printf("\t found %d events for analysis", len(possibleEvents.Items))
+
+		isIntersectionFound := analyzeIntersections(eventRange, possibleEvents)
+
+		if isIntersectionFound {
+			log.Printf("\tdeclining event %s (%s)\n", event.Summary, eventRange)
+			attendance.ResponseStatus = "declined"
+		} else {
+			log.Printf("\taccepting event %s (%s)\n", event.Summary, eventRange)
+			attendance.ResponseStatus = "accepted"
+		}
+
+		_, err = calendarService.Events.Update("primary", event.Id, event).SendNotifications(true).Do()
+
+		if err != nil {
+			fmt.Println(err)
+		}
+
+		return true
+	}
+
+	return false
+}
+
 func calendarChecker() {
 	t := time.Now().Format(time.RFC3339)
 	fmt.Printf("Checking calendar %s\n", t)
@@ -150,82 +261,9 @@ func calendarChecker() {
 	if len(events.Items) > 0 {
 		counter := 0
 		for _, i := range events.Items {
-
-			eventTimeBegin, err := time.Parse(time.RFC3339, i.Start.DateTime)
-			if err != nil {
-				fmt.Println(err)
-				continue
-			}
-
-			eventTimeEnd, err := time.Parse(time.RFC3339, i.End.DateTime)
-			if err != nil {
-				fmt.Println(err)
-				continue
-			}
-			eventDateStart := getDayBeginning(eventTimeBegin)
-			eventDateEnd := getDayEnd(eventTimeEnd)
-			eventRange := timespan.NewTimeSpan(eventTimeBegin, eventTimeEnd)
-
-			var attendance = findAttendee(appConfig.Email, i.Attendees)
-			if attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "tentative" {
+			var result = checkEvent(i)
+			if result {
 				counter++
-				fmt.Printf("%s (%s) %s\n", i.Summary, eventRange, attendance.ResponseStatus)
-				//get the list of all events for the same day
-				log.Printf("day: %s %s\n", eventDateStart.Format(time.RFC3339), eventDateEnd.Format(time.RFC3339))
-				possibleEvents, err := calendarService.Events.List("primary").ShowDeleted(false).SingleEvents(true).TimeMin(eventDateStart.Format(time.RFC3339)).TimeMax(eventDateEnd.Format(time.RFC3339)).Do()
-
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-
-				log.Printf("\t found %d events for analysis", len(possibleEvents.Items))
-
-				isIntersectionFound := false
-				for _, possEvent := range possibleEvents.Items {
-
-					var possEventAttendance = findAttendee(appConfig.Email, possEvent.Attendees)
-					//find only accepted events
-					if possEventAttendance.ResponseStatus != "accepted" {
-						continue
-					}
-
-					possEventTimeBegin, err := time.Parse(time.RFC3339, possEvent.Start.DateTime)
-					if err != nil {
-						fmt.Println(err)
-						continue
-					}
-
-					possEventTimeEnd, err := time.Parse(time.RFC3339, possEvent.End.DateTime)
-					if err != nil {
-						fmt.Println(err)
-						continue
-					}
-
-					possEventRange := timespan.NewTimeSpan(possEventTimeBegin, possEventTimeEnd)
-
-					//fmt.Printf("\tpossible event: %s (%s) %s\n", i.Summary, eventRange, attendance.ResponseStatus)
-
-					if areTimespansIntersected(eventRange, possEventRange) {
-						log.Printf("\tfound intersection with %s (%s)\n", possEvent.Summary, possEventRange)
-						isIntersectionFound = true
-						break
-					}
-				}
-
-				if isIntersectionFound {
-					log.Printf("\tdeclining event %s (%s)\n", i.Summary, eventRange)
-					attendance.ResponseStatus = "declined"
-				} else {
-					log.Printf("\taccepting event %s (%s)\n", i.Summary, eventRange)
-					attendance.ResponseStatus = "accepted"
-				}
-
-				_, err = calendarService.Events.Update("primary", i.Id, i).SendNotifications(true).Do()
-
-				if err != nil {
-					fmt.Println(err)
-				}
 			}
 		}
 
