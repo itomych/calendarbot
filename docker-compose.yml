@@ -7,4 +7,6 @@ services:
     restart: always
 
     environment:
-      - TIME_ZONE=Europe/Kiev
+      - GOOGLE_EMAIL
+      - CHECK_INTERVAL
+      - TIME_ZONE

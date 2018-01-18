@@ -37,8 +37,7 @@ COPY init.sh /init.sh
 RUN chmod +x /init.sh
 
 RUN mkdir -p ~/.config/itomych/calendar-bot && mkdir ~/.credentials
-COPY config.yaml /root/.config/itomych/calendar-bot/
-COPY itomych-calendar-bot.json /root/.credentials/
+COPY *.json /root/.credentials/
 COPY ./src/client_credentials.json /srv/
 
 CMD ["/srv/calendarbot"]

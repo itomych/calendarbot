@@ -13,21 +13,25 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hashicorp/logutils"
+	"github.com/jessevdk/go-flags"
 	"github.com/rickb777/date/timespan"
-
+	"github.com/tucnak/store"
 	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/calendar/v3"
-
-	"github.com/tucnak/store"
 )
 
-//AppConfig is a struct for storing application config
-type AppConfig struct {
-	Email         string
-	CheckInterval time.Duration
+// Options is a struct for storing app config
+type Options struct {
+	Email         string `short:"e" env:"GOOGLE_EMAIL" description:"Email that bot will use to access Google Calendar"`
+	CheckInterval int64  `short:"c" default:"60" env:"CHECK_INTERVAL" description:"Interval of checks in seconds"`
 }
+
+var opts Options
+
+var revision = "unknown"
 
 // getClient uses a Context and Config to retrieve a Token
 // then generate a Client. It returns the generated Client.
@@ -152,13 +156,12 @@ func doEvery(d time.Duration, f func()) {
 	}
 }
 
-var appConfig AppConfig
 var calendarService *calendar.Service
 
 func analyzeIntersections(eventRange timespan.TimeSpan, possibleEvents *calendar.Events) bool {
 	for _, possEvent := range possibleEvents.Items {
 
-		var possEventAttendance = findAttendee(appConfig.Email, possEvent.Attendees)
+		var possEventAttendance = findAttendee(opts.Email, possEvent.Attendees)
 		//find only accepted events
 		if possEventAttendance.ResponseStatus != "accepted" {
 			continue
@@ -181,7 +184,7 @@ func analyzeIntersections(eventRange timespan.TimeSpan, possibleEvents *calendar
 		//fmt.Printf("\tpossible event: %s (%s) %s\n", i.Summary, eventRange, attendance.ResponseStatus)
 
 		if areTimespansIntersected(eventRange, possEventRange) {
-			log.Printf("\tfound intersection with %s (%s)\n", possEvent.Summary, possEventRange)
+			log.Printf("[INFO] \tfound intersection with %s (%s)\n", possEvent.Summary, possEventRange)
 			return true
 		}
 	}
@@ -210,12 +213,12 @@ func checkEvent(event *calendar.Event) bool {
 	eventDateEnd := getDayEnd(eventTimeEnd)
 	eventRange := timespan.NewTimeSpan(eventTimeBegin, eventTimeEnd)
 
-	var attendance = findAttendee(appConfig.Email, event.Attendees)
+	var attendance = findAttendee(opts.Email, event.Attendees)
 	if attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "tentative" {
 
 		fmt.Printf("%s (%s) %s\n", event.Summary, eventRange, attendance.ResponseStatus)
 		//get the list of all events for the same day
-		log.Printf("day: %s %s\n", eventDateStart.Format(time.RFC3339), eventDateEnd.Format(time.RFC3339))
+		//log.Printf("day: %s %s\n", eventDateStart.Format(time.RFC3339), eventDateEnd.Format(time.RFC3339))
 		possibleEvents, err := findPossibleEvents(eventDateStart, eventDateEnd)
 
 		if err != nil {
@@ -223,15 +226,15 @@ func checkEvent(event *calendar.Event) bool {
 			return false
 		}
 
-		log.Printf("\t found %d events for analysis", len(possibleEvents.Items))
+		log.Printf("[INFO] \t found %d events for analysis", len(possibleEvents.Items))
 
 		isIntersectionFound := analyzeIntersections(eventRange, possibleEvents)
 
 		if isIntersectionFound {
-			log.Printf("\tdeclining event %s (%s)\n", event.Summary, eventRange)
+			log.Printf("[INFO] \tdeclining event %s (%s)\n", event.Summary, eventRange)
 			attendance.ResponseStatus = "declined"
 		} else {
-			log.Printf("\taccepting event %s (%s)\n", event.Summary, eventRange)
+			log.Printf("[INFO] \taccepting event %s (%s)\n", event.Summary, eventRange)
 			attendance.ResponseStatus = "accepted"
 		}
 
@@ -249,15 +252,15 @@ func checkEvent(event *calendar.Event) bool {
 
 func calendarChecker() {
 	t := time.Now().Format(time.RFC3339)
-	fmt.Printf("Checking calendar %s\n", t)
+	fmt.Printf("[INFO] Checking calendar %s\n", t)
 
 	events, err := calendarService.Events.List("primary").ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).MaxResults(100).OrderBy("startTime").Do()
 	if err != nil {
-		log.Fatalf("Unable to retrieve next ten of the user's events. %v", err)
+		log.Fatalf("[ERROR] Unable to retrieve next ten of the user's events. %v", err)
 	}
 
-	fmt.Println("Upcoming events:")
+	fmt.Println("[INFO] Upcoming events:")
 	if len(events.Items) > 0 {
 		counter := 0
 		for _, i := range events.Items {
@@ -268,14 +271,43 @@ func calendarChecker() {
 		}
 
 		if counter == 0 {
-			fmt.Printf("No upcoming events that needs action found.\n")
+			fmt.Printf("[INFO] No upcoming events that needs action found.\n")
 		}
 	} else {
-		fmt.Printf("No upcoming events found.\n")
+		fmt.Printf("[INFO] No upcoming events found.\n")
 	}
 }
 
+func setupLog(dbg bool) {
+	filter := &logutils.LevelFilter{
+		Levels:   []logutils.LogLevel{"DEBUG", "INFO", "WARN", "ERROR"},
+		MinLevel: logutils.LogLevel("INFO"),
+		Writer:   os.Stdout,
+	}
+
+	log.SetFlags(log.Ldate | log.Ltime)
+
+	if dbg {
+		log.SetFlags(log.Ldate | log.Ltime | log.Lmicroseconds | log.Lshortfile)
+		filter.MinLevel = logutils.LogLevel("DEBUG")
+	}
+	log.SetOutput(filter)
+}
+
 func main() {
+	fmt.Printf("calendarbot %s\n", revision)
+
+	var parser = flags.NewParser(&opts, flags.Default)
+	if _, err := parser.Parse(); err != nil {
+		if flagsErr, ok := err.(*flags.Error); ok && flagsErr.Type == flags.ErrHelp {
+			os.Exit(0)
+		} else {
+			log.Fatal(flagsErr.Message)
+			os.Exit(1)
+		}
+	}
+	setupLog(true)
+	log.Printf("[INFO] options: %+v", opts)
 
 	c := make(chan os.Signal, 2)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
@@ -284,32 +316,32 @@ func main() {
 		os.Exit(1)
 	}()
 
-	if err := store.Load("config.yaml", &appConfig); err != nil {
-		log.Println("failed to load the config:", err)
-		return
-	}
+	//if err := store.Load("config.yaml", &appConfig); err != nil {
+	//	log.Println("[ERROR] failed to load the config:", err)
+	//	return
+	//}
 
-	log.Printf("Calendar Checker. Using email %s. Check interval %d seconds", appConfig.Email, appConfig.CheckInterval)
+	//log.Printf("[INFO] Calendar Checker. Using email %s. Check interval %d seconds", appConfig.Email, appConfig.CheckInterval)
 
 	ctx := context.Background()
 
 	b, err := ioutil.ReadFile("client_credentials.json")
 	if err != nil {
-		log.Fatalf("Unable to read client secret file: %v", err)
+		log.Fatalf("[ERROR] Unable to read client secret file: %v", err)
 	}
 
 	// If modifying these scopes, delete your previously saved credentials
 	// at ~/.credentials/calendar-go-quickstart.json
 	config, err := google.ConfigFromJSON(b, calendar.CalendarScope)
 	if err != nil {
-		log.Fatalf("Unable to parse client secret file to config: %v", err)
+		log.Fatalf("[ERROR] Unable to parse client secret file to config: %v", err)
 	}
 	client := getClient(ctx, config)
 
 	calendarService, err = calendar.New(client)
 	if err != nil {
-		log.Fatalf("Unable to retrieve calendar Client %v", err)
+		log.Fatalf("[ERROR] Unable to retrieve calendar Client %v", err)
 	}
 
-	doEvery(appConfig.CheckInterval*time.Second, calendarChecker)
+	doEvery(time.Duration(opts.CheckInterval)*time.Second, calendarChecker)
 }
