@@ -127,6 +127,7 @@ func findAttendee(email string, attendees []*calendar.EventAttendee) *calendar.E
 			return val
 		}
 	}
+
 	return nil
 }
 
@@ -214,7 +215,7 @@ func checkEvent(event *calendar.Event) bool {
 	eventRange := timespan.NewTimeSpan(eventTimeBegin, eventTimeEnd)
 
 	var attendance = findAttendee(opts.Email, event.Attendees)
-	if attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "tentative" {
+	if attendance != nil && (attendance.ResponseStatus == "needsAction" || attendance.ResponseStatus == "declined") {
 
 		fmt.Printf("%s (%s) %s\n", event.Summary, eventRange, attendance.ResponseStatus)
 		//get the list of all events for the same day
@@ -252,7 +253,7 @@ func checkEvent(event *calendar.Event) bool {
 
 func calendarChecker() {
 	t := time.Now().Format(time.RFC3339)
-	fmt.Printf("[INFO] Checking calendar %s\n", t)
+	//fmt.Printf("[INFO] Checking calendar %s\n", t)
 
 	events, err := calendarService.Events.List("primary").ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).MaxResults(100).OrderBy("startTime").Do()
@@ -260,7 +261,6 @@ func calendarChecker() {
 		log.Fatalf("[ERROR] Unable to retrieve next ten of the user's events. %v", err)
 	}
 
-	fmt.Println("[INFO] Upcoming events:")
 	if len(events.Items) > 0 {
 		counter := 0
 		for _, i := range events.Items {
@@ -270,9 +270,9 @@ func calendarChecker() {
 			}
 		}
 
-		if counter == 0 {
-			fmt.Printf("[INFO] No upcoming events that needs action found.\n")
-		}
+		//if counter == 0 {
+		//fmt.Printf("[INFO] No upcoming events that needs action found.\n")
+		//}
 	} else {
 		fmt.Printf("[INFO] No upcoming events found.\n")
 	}

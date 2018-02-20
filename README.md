@@ -18,7 +18,7 @@ checkinterval: 60
 
 1. First run should be done in the interactive mode to get the token from Google OAuth2 `docker run -it --name calendarbot itomychstudio/calendarbot:latest`
 
-1. Afterwards, you can run the container in the detached mode `docker run -d --name calendarbot itomychstudio/calendarbot:latest`.
+1. Afterwards, you can run the container in the detached mode `docker run -d --name calendarbot --restart always itomychstudio/calendarbot:latest`.
 
 If you cannot run the container in the interactive mode, run the app locally and copy the ~/.credentials/itomych-calendar-bot.json file to the root folder of the project. 
 It will be automatically copied to the container on docker build.
