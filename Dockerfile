@@ -1,28 +1,24 @@
-FROM golang:1.10-alpine as build
+FROM umputun/baseimage:buildgo-latest as build
 
-RUN go version
-
-ENV CGO_ENABLED=0
-ENV GOOS=linux
-ENV GOARCH=amd64
-
-RUN apk add --no-cache --update git &&\
-    go get -u gopkg.in/alecthomas/gometalinter.v2 && \
-    ln -s /go/bin/gometalinter.v2 /go/bin/gometalinter && \
-    gometalinter --install --force
-
-COPY . /go/src/github.com/itomych/calendarbot
 WORKDIR /go/src/github.com/itomych/calendarbot
 
-RUN cd src && go-wrapper download && go-wrapper install && go test -v $(go list -e ./... | grep -v vendor)
+ADD src /go/src/github.com/itomych/calendarbot/app
+ADD .git /go/src/github.com/itomych/calendarbot/.git
+
+RUN cd app && go test ./...
 
 RUN gometalinter --disable-all --deadline=300s --vendor --enable=vet --enable=vetshadow --enable=golint \
     --enable=staticcheck --enable=ineffassign --enable=goconst --enable=errcheck --enable=unconvert \
-    --enable=deadcode  --enable=gosimple --exclude=test --exclude=mock ./...
+    --enable=deadcode  --enable=gosimple --enable=gas --exclude=test --exclude=mock --exclude=vendor ./...
 
-RUN go build -o calendarbot -ldflags "-X main.revision=$(git rev-parse --abbrev-ref HEAD)-$(git describe --abbrev=7 --always --tags)-$(date +%Y%m%d-%H:%M:%S) -s -w" ./src
+#RUN mkdir -p target && /script/coverage.sh
 
-FROM alpine:3.7
+RUN \
+    version=$(/script/git-rev.sh) && \
+    echo "version $version" && \  
+    go build -o calendarbot -ldflags "-X main.revision=${version} -s -w" ./app
+
+FROM umputun/baseimage:app-latest
 
 LABEL key="maitainer" value="Mikhail Merkulov <mikhail.m@itomy.ch>"
 
@@ -33,8 +29,8 @@ WORKDIR /srv/
 
 COPY --from=build /go/src/github.com/itomych/calendarbot/calendarbot /srv/
 
-COPY init.sh /init.sh
-RUN chmod +x /init.sh
+COPY init.sh /srv/init.sh
+RUN chmod +x /srv/*.sh
 
 RUN mkdir -p ~/.config/itomych/calendar-bot && mkdir ~/.credentials
 COPY *.json /root/.credentials/
